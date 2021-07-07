@@ -1,5 +1,8 @@
-import requests
+import requests, csv, re
 from bs4 import BeautifulSoup
+from datetime import date
+from geopy.geocoders import Nominatim
+
 
 URL = ''
 weblinks = set()
@@ -31,6 +34,7 @@ def find_trainer_details(url):
     ##############################################################
     if soup.title:
         name = soup.title.text
+        name = name.replace(' - Personal Trainer', '')
     else:
         name = None
     
@@ -43,6 +47,8 @@ def find_trainer_details(url):
         website = soup.find('p', class_="purpleblock").text
     else:
         website = None
+    if website == '\n':
+        website = website.replace('\n', '')
     ##############################################################
     find_location = soup.find('ul', class_='areas')
     html_areas = find_location.find_all('li')
@@ -52,9 +58,46 @@ def find_trainer_details(url):
     for area in html_areas:
         areas.append(area.text)
     ##############################################################
-    return name, number, website, areas
+    social_media_location = soup.find('div', class_="mashup mashupdetails")
+    social_media = social_media_location.find_all('a')
+    website_linkedin = None
+    website_twitter = None
+    website_facebook = None
+    website_youtube = None
+    website_instagram = None
+
+    for social in social_media:
+        if social.find('img', alt=True):
+            current_website = social.find('img', alt=True)['alt']
+
+            if current_website == 'LinkedIn':
+                website_linkedin = social['href']
+            if current_website == 'Facebook':
+                website_facebook = social['href']
+            if current_website == 'YouTube':
+                website_youtube = social['href']
+            if current_website == 'Twitter':
+                website_twitter = social['href']
+            if current_website == 'Instagram':
+                website_instagram = social['href']
+
+    ##############################################################
+    age = None if not soup.find('strong', text='Age') else (soup.find('strong', text='Age').parent.text).replace('\n', '')
+    gender = None if not soup.find('strong', text='Gender') else (soup.find('strong', text='Gender').parent.text)
+    member_since = None if not soup.find('strong', text='Member Since') else soup.find('strong', text='Member Since').parent.text
+    date_today = date.today()
+    if age:
+        age = age.replace('Gender: MaleAge: ', '')
+        age = age.replace('Gender: FemaleAge: ', '')
+    if member_since:
+        member_since = member_since.replace('Member Since: ', '')
+    gender = 'Male' if 'Male' in gender else 'Female'
+    ##############################################################
+    return name, number, age, gender, member_since, date_today, website, areas, website_twitter, website_linkedin, website_facebook, website_youtube, website_instagram
 
 profiles = {}
+t_id = []
+group_details = []
 for k in range(3):
     locations = geopraphy[k]
     for location in locations:
@@ -74,32 +117,80 @@ for k in range(3):
             trainers_weblinks = soup.find_all('a', class_="wtrk-click", href=True)
             if not trainers_weblinks:
                 break
-
+            ##########################################################
+            address_book = []
+            trainers_id = []
+            list_profiles = (soup.find('ul', class_="searchresults")).find_all('li')
+            for prof in list_profiles:
+                if 'There are no results for your search.' in prof.text:
+                    continue                
+                long, lat = prof['data-item-latitude'], prof['data-item-longitude']
+                trainer_id = prof['data-item-trainerid']
+                if long and lat:
+                    locator = Nominatim(user_agent='myGeocoder')
+                    coordinates = long, lat
+                    location = locator.reverse(coordinates)
+                    address = location.raw['display_name']
+                else:
+                    address = None
+                address_book.append(address)
+                trainers_id.append(trainer_id)
+                t_id.append(trainer_id)
+            ##########################################################
+            print(URL + str(i))
+            seen = set()
+            weblinks = []
             for trainer in trainers_weblinks:
                 weblink = trainer['href']
-                weblinks.add(weblink)
+                if weblink not in seen:
+                    weblinks.append(weblink)
+                    seen.add(weblink)
+            for q in range(len(weblinks)):
+                weblink = weblinks[q]
+                address = address_book[q]
+                trainer_id = trainers_id[q]
+                group_details.append((weblink, address, trainer_id))
 
-    for weblink in weblinks:
+        
+    for weblink, address, trainer_id in group_details:
 
         url = 'https://nrpt.co.uk' + weblink
         
-        name, number, website, areas = find_trainer_details(url)
+        name, number, age, gender, member_since, date_today, website, areas, twitter, linkedin, facebook, youtube, instagram = find_trainer_details(url)
+
+        profile_id = re.sub("[^0-9]", "", weblink)
 
         profiles[name] = {
             'name': name,
+            'trainer_id': trainer_id,
             'number': number,
+            'age': age,
+            'gender': gender,
+            'member_since': member_since,
+            'date_today': date_today,
+            'address': address,
             'website': website,
-            'areas': areas
+            'areas': areas,
+            'twitter': twitter,
+            'linkedin': linkedin,
+            'facebook': facebook,
+            'youtube': youtube,
+            'instagram': instagram
             }
-        
 
-print(len(profiles.keys()))
-print(profiles.keys())
+fieldnames = ['name', 'trainer_id', 'number',  'age', 'gender', 'member_since', 'date_today','address', 'website', 'areas', 'twitter', 'linkedin', 'facebook', 'youtube', 'instagram']
+with open('personal_trainers.csv', 'w', newline='') as csvfile:
+    writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+    writer.writeheader()
+    writer.writerows(profiles.values())
+
+print(t_id)
 # 356 City
 # 398 Town
 # 387 County
 
 # 417 Total
+
 
 
 
